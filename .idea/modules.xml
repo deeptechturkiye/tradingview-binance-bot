@@ -2,7 +2,11 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+<<<<<<< HEAD
       <module fileurl="file://$PROJECT_DIR$/.idea/tradingview-webhook-bot.iml" filepath="$PROJECT_DIR$/.idea/tradingview-webhook-bot.iml" />
+=======
+      <module fileurl="file://$PROJECT_DIR$/.idea/tradingview-webhook-exchange.iml" filepath="$PROJECT_DIR$/.idea/tradingview-webhook-exchange.iml" />
+>>>>>>> 746e5bc9c30e669421598b53812595a7d87dae7e
     </modules>
   </component>
 </project>
