@@ -1,0 +1,9 @@
+{
+  "ticker": "{{ticker}}",
+  "exchange": "{{exchange}}",
+  "price": "{{strategy.order.price}}",
+  "side": "{{strategy.order.comment}}",
+  "quantity": "1",
+  "binanceApiKey":"tLcl7vllh7XnfiAk3YMDmQ2ocxBPSbsdYnsV6EaCbb6DiISxZVjjV8NBcdcX1PtP",
+  "binanceSecretKey": "5TeRqdzZx2n9RPsM6KhHLAcgLCRlccYca2pIhkcxBs9IcQhtdATS06yasI2IMZCM"
+}
