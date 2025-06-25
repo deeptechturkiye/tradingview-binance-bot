@@ -1,0 +1,7 @@
+{
+  "ticker": "{{ticker}}",
+  "exchange": "{{exchange}}",
+  "price": "{{strategy.order.price}}",
+  "side": "{{strategy.order.comment}}",
+  "quantity": "1"
+}
