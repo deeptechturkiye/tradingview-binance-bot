@@ -3,7 +3,9 @@
   "exchange": "{{exchange}}",
   "price": "{{strategy.order.price}}",
   "side": "{{strategy.order.comment}}",
-  "quantity": "1",
-  "binanceApiKey":"tLcl7vllh7XnfiAk3YMDmQ2ocxBPSbsdYnsV6EaCbb6DiISxZVjjV8NBcdcX1PtP",
-  "binanceSecretKey": "5TeRqdzZx2n9RPsM6KhHLAcgLCRlccYca2pIhkcxBs9IcQhtdATS06yasI2IMZCM"
+  "quantity": "1"
+  // "telegramBotApi": "your telegram bot api", # Telegram kaldırıldı
+  // "telegramUserId": "your telegram user id", # Telegram kaldırıldı
+  // "binanceApiKey":"your binance api key", # Anahtarlar kodda sabit olduğu için kaldırıldı
+  // "binanceSecretKey": "your binance secret key" # Anahtarlar kodda sabit olduğu için kaldırıldı
 }
