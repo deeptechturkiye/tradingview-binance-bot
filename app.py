@@ -9,6 +9,10 @@ BINANCE_API_KEY = '1NK6KpwVAvrujTmmqi5svQoWeIWJcui8DsvrfDufG6tUfxRBpimJbVzfvMH77
 BINANCE_API_SECRET = 'VzU4O81to2lNcOYXwi8yloB8ZpDCeY6Qm02DAEGGniEXs82E78MOyX6jeXR3Pzda'
 
 @app.route('/webhook', methods=['POST'])
+@app.route('/myip', methods=['GET'])
+def get_ip():
+    return jsonify({"ip": request.remote_addr})
+
 def webhook():
     if request.is_json:
         data = request.json
