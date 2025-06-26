@@ -4,12 +4,12 @@ from binance.spot import Spot as Client
 
 app = Flask(__name__)
 
+# DİKKAT: Güvenlik için ortam değişkenlerini kullanmak her zaman tercih edilir.
+# Bu sadece hata ayıklama amacıyla ve geçici bir çözümdür.
+# Kendi Binance API Key ve Secret'ınızı BURAYA girdim:
+BINANCE_API_KEY = '1NK6KpwVAvrujTmmqi5svQoWeIWJcui8DsvrfDufG6tUfxRBpimJbVzfvMH77u7K'  # API Key'iniz
+BINANCE_API_SECRET = 'VzU4O81to2lNcOYXwi8yloB8ZpDCeY6Qm02DAEGGniEXs82E78MOyX6jeXR3Pzda'  # Secret Key'iniz
 
-# Binance API key ve secret'ınızı ortam değişkenlerinden almalısınız.
-# Render'da "Environment Variables" kısmına BINANCE_API_KEY ve BINANCE_API_SECRET olarak ekleyin.
-# YERELDE TEST EDİYORSANIZ, AŞAĞIDAKİ SATIRLARI AKTİF EDEBİLİRSİNİZ:
-# os.environ['BINANCE_API_KEY'] = 'YOUR_API_KEY' # Kendi API Key'inizle değiştirin
-# os.environ['BINANCE_API_SECRET'] = 'YOUR_API_SECRET' # Kendi API Secret'ınızla değiştirin
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -23,12 +23,18 @@ def webhook():
         # Gelen 'side' değerini loglayın
         print(f"Side value received: '{side_value}'")
 
-        # Binance Client'ı her istekte yeniden oluşturmak veya mevcut client'ı kullanın
         try:
-            api_key = os.environ.get('BINANCE_API_KEY')
-            api_secret = os.environ.get('BINANCE_API_SECRET')
-            if not api_key or not api_secret:
-                raise ValueError("Binance API Key or Secret not found in environment variables.")
+            # Doğrudan koda gömülen anahtarları kullanın
+            api_key = BINANCE_API_KEY
+            api_secret = BINANCE_API_SECRET
+
+            # Hata ayıklama için API anahtarlarının durumunu loglayın
+            print(f"DEBUG: Using embedded BINANCE_API_KEY: {'[SET]' if api_key else '[NOT SET]'}")
+            print(f"DEBUG: Using embedded BINANCE_API_SECRET: {'[SET]' if api_secret else '[NOT SET]'}")
+
+            if not api_key or not api_secret:  # Anahtarların boş olup olmadığını kontrol eder
+                raise ValueError("Binance API Key or Secret not properly set in code.")
+
             client = Client(api_key, api_secret)
         except Exception as e:
             print(f"Binance API Client initialization error: {e}")
@@ -68,4 +74,4 @@ def webhook():
 if __name__ == '__main__':
     # Render'da doğru portu kullanmak için 'PORT' ortam değişkenini kullanın
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port) 
+    app.run(host='0.0.0.0', port=port)
