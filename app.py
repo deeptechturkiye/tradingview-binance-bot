@@ -1,56 +1,71 @@
-# Gerekli kütüphaneleri içe aktar
-from flask import Flask, request
-import json
 import os
+from flask import Flask, request, jsonify
 from binance.spot import Spot as Client
 
-# Flask uygulamasını oluştur
 app = Flask(__name__)
 
-# --- ÖNEMLİ VE GÜVENLİ YÖNTEM ---
-# API Anahtarlarını kodun içine yazmak yerine, Heroku'daki Ortam Değişkenlerinden (Config Vars) al.
-# Bu, anahtarlarınızın güvende kalmasını sağlar.
-BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY")
-BINANCE_SECRET_KEY = os.environ.get("BINANCE_SECRET_KEY")
 
-# TradingView'dan gelen sinyalleri yakalayacak adres
-@app.route("/webhook", methods=['POST'])
+# Binance API key ve secret'ınızı ortam değişkenlerinden almalısınız.
+# Render'da "Environment Variables" kısmına BINANCE_API_KEY ve BINANCE_API_SECRET olarak ekleyin.
+# YERELDE TEST EDİYORSANIZ, AŞAĞIDAKİ SATIRLARI AKTİF EDEBİLİRSİNİZ:
+# os.environ['BINANCE_API_KEY'] = 'YOUR_API_KEY' # Kendi API Key'inizle değiştirin
+# os.environ['BINANCE_API_SECRET'] = 'YOUR_API_SECRET' # Kendi API Secret'ınızla değiştirin
+
+@app.route('/webhook', methods=['POST'])
 def webhook():
-    try:
-        # Gelen veriyi JSON formatına çevir
-        data = json.loads(request.data)
-        
-        # Verinin içinden gerekli bilgileri al
-        ticker = data['ticker']
-        side = data['side']
-        quantity = data['quantity']
+    if request.is_json:
+        data = request.json
+        # Gelen tüm JSON'u loglayın (hata ayıklama için önemli)
+        print("Received webhook data:")
+        print(data)
 
-        # Binance'e gönderilecek emir (order) parametrelerini hazırla
-        params = {
-            "symbol": ticker,
-            "side": side.upper(),  # 'buy' veya 'sell' gelirse diye büyük harfe çevir
-            "type": "MARKET",
-            "quantity": quantity,
-        }
+        side_value = data.get('side')
+        # Gelen 'side' değerini loglayın
+        print(f"Side value received: '{side_value}'")
 
-        # Binance API istemcisini (client) anahtarlarınla oluştur
-        client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY)
-        
-        # Yeni market emrini Binance'e gönder
-        client.new_order(**params)
-        print(f"Başarılı emir: {side} {quantity} {ticker}")
+        # Binance Client'ı her istekte yeniden oluşturmak veya mevcut client'ı kullanın
+        try:
+            api_key = os.environ.get('BINANCE_API_KEY')
+            api_secret = os.environ.get('BINANCE_API_SECRET')
+            if not api_key or not api_secret:
+                raise ValueError("Binance API Key or Secret not found in environment variables.")
+            client = Client(api_key, api_secret)
+        except Exception as e:
+            print(f"Binance API Client initialization error: {e}")
+            return jsonify({"status": "error", "message": "API Client init error"}), 500
 
-    except Exception as e:
-        # Bir hata olursa, hatayı Heroku loglarına yazdır.
-        # Bu sayede Heroku kontrol panelinden hatanın ne olduğunu görebilirsin.
-        print(f"HATA OLUŞTU: {e}")
+        symbol = data.get('ticker')
 
-    # Her durumda TradingView'a işlemin alındığına dair bir mesaj gönder
-    return {"code": "success"}
+        # TradingView'den string olarak gelebileceği için float'a çeviriyoruz
+        # .replace(",", ".") ekledim, eğer TradingView ondalık ayracı olarak virgül gönderirse diye.
+        try:
+            quantity_str = str(data.get('quantity')).replace(",", ".")
+            quantity = float(quantity_str)
+        except (ValueError, TypeError):
+            print(f"Error converting quantity to float: {data.get('quantity')}")
+            return jsonify({"status": "error", "message": "Invalid quantity format"}), 400
+
+        # Sadece "BUY" veya "SELL" gelirse emir gönder
+        if side_value == "BUY" or side_value == "SELL":
+            try:
+                # Binance API'sine emir gönderme
+                # type='MARKET' en basit emir türüdür. Limit emir veya başka türler de kullanabilirsiniz.
+                order = client.new_order(symbol=symbol, side=side_value, type='MARKET', quantity=quantity)
+                print(f"Order placed successfully: {order}")
+                return jsonify({"status": "success", "message": "Order placed"}), 200
+            except Exception as e:
+                # Binance API'den dönen tüm hatayı loglayın
+                print(f"Error placing order with Binance API: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 400
+        else:
+            # Geçersiz 'side' değeri geldiğinde hata ver
+            print(f"Invalid side value received from TradingView: {side_value}. Not placing order.")
+            return jsonify({"status": "error", "message": f"Invalid side value received: {side_value}"}), 400
+    else:
+        return jsonify({"status": "error", "message": "Request must be JSON"}), 400
 
 
-# Bu bölüm, kodu kendi bilgisayarında çalıştırırsan devreye girer.
-# Heroku bu kısmı kullanmaz, kendi sunucusunu (Gunicorn) kullanır.
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == '__main__':
+    # Render'da doğru portu kullanmak için 'PORT' ortam değişkenini kullanın
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port) 
