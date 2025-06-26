@@ -3,5 +3,5 @@
   "exchange": "{{exchange}}",
   "price": "{{strategy.order.price}}",
   "side": "{{strategy.order.comment}}",
-  "quantity": "1"
+  "quantity": "{{strategy.order.contracts}}"
 }
