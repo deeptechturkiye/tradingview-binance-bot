@@ -4,7 +4,7 @@ from binance.spot import Spot as Client
 
 app = Flask(__name__)
 
-# API Key ve Secret (env ya da doğrudan tanım)
+# API Key ve Secret .env üzerinden veya doğrudan
 BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY") or "BURAYA_API_KEY"
 BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET") or "BURAYA_SECRET"
 
@@ -14,7 +14,7 @@ def webhook():
         return jsonify({"status": "error", "message": "Request must be JSON"}), 400
 
     data = request.get_json()
-    print(f"Webhook received: {data}")
+    print(f"📩 Webhook received: {data}")
 
     try:
         client = Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
@@ -27,13 +27,10 @@ def webhook():
     if side not in ["BUY", "SELL"]:
         return jsonify({"status": "error", "message": f"Invalid side: {side}"}), 400
 
-    # Eğer SELL ise → Otomatik coin bakiyesi tespit et
+    # === SELL için otomatik bakiye tespiti ===
     if side == "SELL":
         try:
-            # Coin adını sembolden ayıkla (örn: ETHUSDT → ETH)
             asset = symbol.replace("USDT", "").upper()
-
-            # Hesaptaki coin bakiyesini çek
             balances = client.account()["balances"]
             coin_balance = next((b for b in balances if b["asset"] == asset), None)
 
@@ -41,24 +38,34 @@ def webhook():
                 return jsonify({"status": "error", "message": f"No balance found for asset: {asset}"}), 404
 
             free_amount = float(coin_balance["free"])
-            quantity = round(free_amount - 0.001, 6)  # Komisyon payı bırak
+
+            # Binance LOT_SIZE uyumluluğu için minimum ve adım
+            MIN_LOT_SIZE = 0.3     # Bu değer coin’e göre değişebilir
+            LOT_STEP = 0.001
+
+            if free_amount < MIN_LOT_SIZE:
+                return jsonify({"status": "error", "message": f"Balance {free_amount} < min lot size {MIN_LOT_SIZE}"}), 400
+
+            raw_quantity = free_amount - 0.001  # Komisyon için küçük pay
+            quantity = round(raw_quantity - (raw_quantity % LOT_STEP), 6)
+
         except Exception as e:
             return jsonify({"status": "error", "message": f"Balance fetch error: {e}"}), 500
 
+    # === BUY için doğrudan quantity ===
     else:
-        # BUY için quantity doğrudan JSON'dan gelir
         qty_raw = str(data.get("quantity", "0")).replace(",", ".")
         try:
             quantity = float(qty_raw)
         except:
             return jsonify({"status": "error", "message": f"Quantity parse error: {qty_raw}"}), 400
 
-    # Market emrini ver
+    # === Emir Gönder ===
     try:
         order = client.new_order(symbol=symbol, side=side, type="MARKET", quantity=quantity)
         print(f"✅ Order executed: {order}")
 
-        # İşlem sonrası bakiyeyi göster
+        # Güncel bakiye yazdır
         try:
             asset = symbol.replace("USDT", "").upper()
             balances = client.account()["balances"]
@@ -73,7 +80,7 @@ def webhook():
         print(f"❌ Binance order error: {e}")
         return jsonify({"status": "error", "message": f"Order error: {e}"}), 400
 
-# Test için /myip route (IP loglama)
+# IP testi için
 @app.route('/myip', methods=['GET'])
 def get_ip():
     return jsonify({"ip": request.remote_addr})
