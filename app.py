@@ -10,59 +10,46 @@ app = Flask(__name__)
 BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY") or "BURAYA_API_KEY"
 BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET") or "BURAYA_SECRET"
 
-# SPAM KORUMA - Global değişkenler
+# SPAM KORUMA
 last_signals = {}
-MIN_INTERVAL_SECONDS = 60  # Minimum 60 saniye aralık
-position_state = {}  # Pozisyon durumu takibi
+MIN_INTERVAL_SECONDS = 60
+position_state = {}
 
 
 def is_spam_signal(symbol, side):
-    """Spam sinyal kontrolü"""
     key = f"{symbol}_{side}"
     current_time = time.time()
-
     if key in last_signals:
         time_diff = current_time - last_signals[key]
         if time_diff < MIN_INTERVAL_SECONDS:
-            print(f"🚫 SPAM! {symbol} {side} sinyali {time_diff:.1f}s önce geldi (Min: {MIN_INTERVAL_SECONDS}s)")
+            print(f"🚫 SPAM! {symbol} {side} sinyali {time_diff:.1f}s önce geldi")
             return True
-
-    # Sinyal kabul ediliyor
     last_signals[key] = current_time
     return False
 
 
 def can_execute_trade(symbol, side):
-    """İşlem yapılabilir mi kontrolü"""
-    # Spam kontrolü
+    current_position = position_state.get(symbol, "NONE")
     if is_spam_signal(symbol, side):
         return False, "Spam sinyal"
-
-    # Pozisyon kontrolü
-    current_position = position_state.get(symbol, "NONE")
-
     if side == "BUY":
         if current_position == "LONG":
             return False, "Zaten LONG pozisyonda"
     elif side == "SELL":
         if current_position != "LONG":
             return False, "LONG pozisyon yok, SELL yapılamaz"
-
     return True, "OK"
 
 
 def execute_with_retry(func, max_retries=3, delay=5):
-    """Retry mekanizması ile işlem çalıştırma"""
     for attempt in range(max_retries):
         try:
             return func()
         except Exception as e:
             error_str = str(e)
             print(f"❌ Deneme {attempt + 1} başarısız: {error_str}")
-
-            # Rate limit hatası kontrolü
             if "418" in error_str or "banned" in error_str.lower() or "-1003" in error_str:
-                wait_time = 60 * (2 ** attempt)  # Exponential backoff: 60s, 120s, 240s
+                wait_time = 60 * (2 ** attempt)
                 print(f"⏳ Rate limit! {wait_time} saniye bekleniyor...")
                 time.sleep(wait_time)
             elif attempt < max_retries - 1:
@@ -86,7 +73,6 @@ def webhook():
     if side not in ["BUY", "SELL"]:
         return jsonify({"status": "error", "message": f"Geçersiz yön: {side}"}), 400
 
-    # SPAM VE POZİSYON KONTROLÜ
     can_trade, reason = can_execute_trade(symbol, side)
     if not can_trade:
         print(f"⚠️ İşlem atlandı: {reason}")
@@ -100,18 +86,12 @@ def webhook():
 
         if side == "BUY":
             usdt_amount = float(str(data.get("usdt_amount", "0")).replace(",", "."))
+            price = float(str(data.get("price", "0")).replace(",", "."))
 
-            def get_price():
-                return float(client.ticker_price(symbol=symbol)["price"])
-
-            price = execute_with_retry(get_price)
-
-            # Lot adımını al
             def get_exchange_info():
                 exchange_info = client.exchange_info()
                 symbol_info = next((s for s in exchange_info["symbols"] if s["symbol"] == symbol), None)
-                step_size = 0.0001  # Varsayılan
-
+                step_size = 0.0001
                 if symbol_info:
                     for f in symbol_info["filters"]:
                         if f["filterType"] == "LOT_SIZE":
@@ -139,7 +119,6 @@ def webhook():
                 exchange_info = client.exchange_info()
                 symbol_info = next((s for s in exchange_info["symbols"] if s["symbol"] == symbol), None)
                 step_size = 0.0001
-
                 if symbol_info:
                     for f in symbol_info["filters"]:
                         if f["filterType"] == "LOT_SIZE":
@@ -149,15 +128,13 @@ def webhook():
 
             step_size = execute_with_retry(get_step_size)
             decimals = abs(int(f"{step_size:e}".split("e")[-1]))
-            quantity = round(free - step_size, decimals)  # Komisyon marjı
+            quantity = round(free - step_size, decimals)
 
-        # EMİR GÖNDERME
         def place_order():
             return client.new_order(symbol=symbol, side=side, type="MARKET", quantity=quantity)
 
         order = execute_with_retry(place_order)
 
-        # POZİSYON DURUMUNU GÜNCELLE
         if side == "BUY":
             position_state[symbol] = "LONG"
         elif side == "SELL":
@@ -177,7 +154,6 @@ def webhook():
         error_msg = str(e)
         print(f"❌ Emir hatası: {error_msg}")
 
-        # Rate limit hatası özel mesajı
         if "418" in error_msg or "banned" in error_msg.lower():
             return jsonify({
                 "status": "error",
@@ -190,7 +166,6 @@ def webhook():
 
 @app.route('/status', methods=['GET'])
 def status():
-    """Sistem durumu endpoint'i"""
     return jsonify({
         "status": "active",
         "positions": position_state,
@@ -201,7 +176,6 @@ def status():
 
 @app.route('/reset', methods=['POST'])
 def reset():
-    """Acil durum reset endpoint'i"""
     global last_signals, position_state
     last_signals.clear()
     position_state.clear()
@@ -218,4 +192,3 @@ if __name__ == '__main__':
     print(f"🚀 Bot başlatılıyor - Port: {port}")
     print(f"⏱️ Minimum sinyal aralığı: {MIN_INTERVAL_SECONDS} saniye")
     app.run(host="0.0.0.0", port=port)
-    
