@@ -74,11 +74,11 @@ def track_tp_sl(symbol, entry_price, tp_percent, sl_percent):
     client = Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
     tp = entry_price * (1 + tp_percent / 100)
     sl = entry_price * (1 - sl_percent / 100)
-    print(f"\ud83c\udf0d Takip: {symbol} | TP: {tp:.2f} | SL: {sl:.2f}")
+    print(f"TAKİP BAŞLADI: {symbol} | TP: {tp:.2f} | SL: {sl:.2f}")
 
     while has_position(client, symbol):
         price = float(client.ticker_price(symbol)["price"])
-        print(f"\ud83d\udd39 {symbol} Anlik: {price:.2f}")
+        print(f"FİYAT: {symbol} = {price:.2f}")
 
         if price >= tp:
             print(f"\u2705 TP Seviyesi Geldi - SATILIYOR!")
