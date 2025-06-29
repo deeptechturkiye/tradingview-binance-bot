@@ -118,9 +118,11 @@ def webhook():
 
     try:
         if side == "BUY":
-            price = float(str(data.get("price", "0")).replace(",", "."))
             step = get_step_size(client, symbol)
             dec = abs(int(f"{step:e}".split("e")[-1]))
+
+            # Yeni: Fiyat otomatik çekilsin eğer yoksa
+            price = float(client.ticker_price(symbol)["price"]) if "price" not in data else float(str(data.get("price", "0")).replace(",", "."))
 
             if str(data.get("usdt_amount")).upper() == "ALL":
                 usdt = get_free_balance(client, "USDT") * 0.998
