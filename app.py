@@ -1,127 +1,67 @@
 import os
-import math
-import time
 from flask import Flask, request, jsonify
 from binance.spot import Spot as Client
-from threading import Lock
 
 app = Flask(__name__)
 
-# Binance API
+# Binance API anahtarları
 BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY")
 BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET")
+
 client = Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
 
-# Exchange info cache ve işlem sınırı
-exchange_info_cache = {}
-exchange_info_lock = Lock()
-last_request_time = 0
-request_lock = Lock()
-
-# Bakiye sorgulama (tek API çağrısı ile)
-def get_free_balance(asset):
-    account_info = client.account()
-    for b in account_info['balances']:
-        if b['asset'] == asset:
-            return float(b['free'])
-    return 0.0
-
-# StepSize'e göre miktar yuvarlama
-def round_step(qty, step):
-    precision = int(round(-math.log10(step)))
-    return round(qty - (qty % step), precision)
-
-@app.route('/')
-def index():
-    return "Bot çalışıyor"
-
-@app.route('/balance')
-def balance_all():
-    account_info = client.account()
-    balances = {
-        asset['asset']: float(asset['free'])
-        for asset in account_info['balances']
-        if float(asset['free']) > 0
-    }
-    return jsonify({"balances": balances, "status": "success"})
-
-@app.route('/balance/<symbol>')
-def balance_one(symbol):
-    balance = get_free_balance(symbol.upper())
-    return jsonify({
-        "asset": symbol.upper(),
-        "balance": balance,
-        "status": "success"
-    })
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    global last_request_time
+# USDT bakiyesini veya istenen varlığı sorgulamak için
+@app.route("/balance/<asset>", methods=["GET"])
+def balance(asset):
     try:
-        with request_lock:
-            now = time.time()
-            if now - last_request_time < 1:
-                return jsonify({"message": "Çok sık istek", "status": "rate_limited"}), 429
-            last_request_time = now
+        info = client.account()
+        for b in info["balances"]:
+            if b["asset"] == asset.upper():
+                return jsonify({"asset": asset.upper(), "balance": b["free"], "status": "success"})
+        return jsonify({"message": f"{asset} not found", "status": "error"}), 404
+    except Exception as e:
+        return jsonify({"message": str(e), "status": "error"}), 500
 
-        data = request.json
-        symbol = data.get("ticker")
-        side = data.get("side", "").upper()
-        usdt_amount_raw = data.get("usdt_amount")
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.get_json()
 
-        if symbol is None or side not in ["BUY", "SELL"] or usdt_amount_raw is None:
-            return jsonify({"message": "Eksik parametre", "status": "error"}), 400
+    try:
+        ticker = data["ticker"]
+        side = data["side"].upper()
+        amount_raw = data["usdt_amount"]
 
-        base_asset = symbol.replace("USDT", "")
+        # Güncel fiyatı çek
+        price = float(client.ticker_price(ticker)["price"])
 
-        # Exchange info cache kullan
-        with exchange_info_lock:
-            if symbol not in exchange_info_cache:
-                exchange_info_cache[symbol] = client.exchange_info(symbol=symbol)
+        # Varlık adı (örneğin: BNBUSDT -> BNB)
+        base_asset = ticker.replace("USDT", "")
 
-        lot_size_filter = next(
-            f for f in exchange_info_cache[symbol]["symbols"][0]["filters"]
-            if f["filterType"] == "LOT_SIZE"
-        )
-        step_size = float(lot_size_filter["stepSize"])
+        if amount_raw == "ALL":
+            balance = float(client.account()["balances"]
+                            [0 if base_asset == "USDT" else
+                             next(i for i, b in enumerate(client.account()["balances"]) if b["asset"] == (base_asset if side == "SELL" else "USDT"))]["free"])
 
-        quantity = 0
-        if usdt_amount_raw == "ALL":
-            asset = base_asset if side == "SELL" else "USDT"
-            balance = get_free_balance(asset)
-            if side == "SELL":
-                quantity = round_step(balance * 0.995, step_size)
-            else:
-                price = float(client.ticker_price(symbol=symbol))
-                quantity = round_step((balance / price) * 0.995, step_size)
+            if side == "BUY":
+                qty = round(balance / price, 6)
+            else:  # SELL
+                qty = round(balance, 6)
         else:
-            usdt_amount = float(usdt_amount_raw)
-            price = float(client.ticker_price(symbol=symbol))
-            quantity = round_step(usdt_amount / price, step_size)
-
-        if quantity <= 0:
-            print(f"Geçersiz miktar: {quantity}")
-            return jsonify({"message": "İşlem miktarı geçersiz", "status": "error"}), 400
+            qty = round(float(amount_raw) / price, 6) if side == "BUY" else round(float(amount_raw), 6)
 
         order = client.new_order(
-            symbol=symbol,
+            symbol=ticker,
             side=side,
             type="MARKET",
-            quantity=quantity
+            quantity=qty
         )
-
-        # Sade log çıktısı
-        print(f"Webhook verisi: {data}")
-        print(f"İşlem: {side} - {symbol} - Miktar: {quantity}")
-        print(f"Binance cevabı: {order}")
 
         return jsonify({
             "message": f"{side} emri gönderildi",
-            "quantity": quantity,
             "order": order,
+            "quantity": qty,
             "status": "success"
         })
 
     except Exception as e:
-        print(f"HATA: {str(e)}")
-        return jsonify({"message": str(e), "status": "error"}), 500
+        return jsonify({"message": str(e), "status": "error"}), 400
