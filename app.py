@@ -83,7 +83,8 @@ def webhook():
         min_notional_val = float(min_notional["minNotional"]) if min_notional else 10
 
         quantity = 0
-        price = float(client.ticker_price(symbol=symbol))
+        price = float(client.ticker_price(symbol=symbol)["price"])
+
 
         if usdt_amount_raw == "ALL":
             asset = base_asset if side == "SELL" else "USDT"
