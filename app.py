@@ -4,68 +4,81 @@ from binance.spot import Spot as Client
 
 app = Flask(__name__)
 
-# Binance API key ve secret (Render için ortam değişkenlerinden alınır)
-BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY", "YOUR_API_KEY")
-BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET", "YOUR_API_SECRET")
+# Ortam değişkenlerinden API anahtarlarını al
+BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY")
+BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET")
 
-client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
+# Binance istemcisi
+client = Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
 
-@app.route('/')
-def home():
-    return "Webhook bot is live!"
-
-@app.route('/webhook', methods=['POST'])
+@app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.get_json()
-    print("📩 Webhook verisi alındı:", data)
-
     try:
-        ticker = data.get("ticker")
-        side = data.get("side").upper()
-        usdt_amount = float(data.get("usdt_amount"))
+        data = request.json
+        print("📩 Webhook verisi alındı:", data)
 
-        if not ticker or not side or not usdt_amount:
-            return jsonify({"status": "error", "message": "Eksik veri"}), 400
-
-        # Mevcut fiyatı anlık çekiyoruz
-        price_data = client.ticker_price(symbol=ticker)
-        current_price = float(price_data["price"])
-
-        quantity = round(usdt_amount / current_price, 5)
+        symbol = data["ticker"]
+        side = data["side"].upper()
+        usdt_amount = data["usdt_amount"]
 
         if side == "BUY":
-            order = client.new_order(symbol=ticker, side="BUY", type="MARKET", quantity=quantity)
-        elif side == "SELL":
-            order = client.new_order(symbol=ticker, side="SELL", type="MARKET", quantity=quantity)
-        else:
-            return jsonify({"status": "error", "message": "Geçersiz yön"}), 400
+            usdt = float(usdt_amount)
+            price = float(client.ticker_price(symbol))
+            quantity = round(usdt / price, 5)
+            order = client.new_order(
+                symbol=symbol, side="BUY", type="MARKET", quantity=quantity
+            )
+            return jsonify({"status": "buy order sent", "details": order}), 200
 
-        return jsonify({"status": "success", "order": order})
+        elif side == "SELL":
+            if usdt_amount == "ALL":
+                asset = symbol.replace("USDT", "")
+                balance = client.user_asset_balance(asset=asset)
+                quantity = float(balance["free"])
+            else:
+                usdt = float(usdt_amount)
+                price = float(client.ticker_price(symbol))
+                quantity = round(usdt / price, 5)
+
+            order = client.new_order(
+                symbol=symbol, side="SELL", type="MARKET", quantity=quantity
+            )
+            return jsonify({"status": "sell order sent", "details": order}), 200
+
+        else:
+            return jsonify({"error": "Invalid side"}), 400
 
     except Exception as e:
         print("❌ Hata:", str(e))
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/balance/<symbol>', methods=['GET'])
-def balance(symbol):
+
+@app.route("/balance", methods=["GET"])
+def get_all_balances():
     try:
-        account = client.account()
-        asset = next((b for b in account["balances"] if b["asset"] == symbol.upper()), None)
-        if asset:
-            return jsonify({"status": "success", "asset": asset["asset"], "balance": float(asset["free"])})
-        else:
-            return jsonify({"status": "error", "message": "Varlık bulunamadı"}), 404
+        account_info = client.account()
+        balances = {
+            asset["asset"]: float(asset["free"])
+            for asset in account_info["balances"]
+            if float(asset["free"]) > 0
+        }
+        return jsonify({"balances": balances, "status": "success"}), 200
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/balance', methods=['GET'])
-def all_balances():
+
+@app.route("/balance/<asset>", methods=["GET"])
+def get_asset_balance(asset):
     try:
-        account = client.account()
-        balances = {b["asset"]: float(b["free"]) for b in account["balances"] if float(b["free"]) > 0}
-        return jsonify({"status": "success", "balances": balances})
+        balance = client.user_asset_balance(asset=asset.upper())
+        return jsonify({
+            "asset": asset.upper(),
+            "balance": float(balance["free"]),
+            "status": "success"
+        }), 200
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     app.run(debug=False)
