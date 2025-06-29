@@ -1,189 +1,192 @@
+# ✅ Full-featured Binance Trading Bot - Spot, TP/SL, Anti-Ban
+
 import os
 import time
+import threading
 from datetime import datetime
 from flask import Flask, request, jsonify
 from binance.spot import Spot as Client
 
 app = Flask(__name__)
 
-# Güvenli API erişimi
 BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY") or "BURAYA_API_KEY"
 BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET") or "BURAYA_SECRET"
 
-# SPAM KORUMA
+# ✅ SPAM ve RATE LIMIT KORUMA
 last_signals = {}
 MIN_INTERVAL_SECONDS = 60
 
-# Retry wrapper
-def execute_with_retry(func, max_retries=3, delay=5):
-    for attempt in range(max_retries):
-        try:
-            return func()
-        except Exception as e:
-            error_str = str(e)
-            print(f"❌ Deneme {attempt + 1} başarısız: {error_str}")
-            if "418" in error_str or "banned" in error_str.lower() or "-1003" in error_str:
-                wait_time = 60 * (2 ** attempt)
-                print(f"⏳ Rate limit! {wait_time} saniye bekleniyor...")
-                time.sleep(wait_time)
-            elif attempt < max_retries - 1:
-                print(f"⏳ {delay} saniye beklenip tekrar deneniyor...")
-                time.sleep(delay)
-            else:
-                raise e
-
-# SPAM kontrolü
 def is_spam_signal(symbol, side):
     key = f"{symbol}_{side}"
     current_time = time.time()
     if key in last_signals:
         time_diff = current_time - last_signals[key]
         if time_diff < MIN_INTERVAL_SECONDS:
-            print(f"🚫 SPAM! {symbol} {side} sinyali {time_diff:.1f}s önce geldi")
+            print(f"\u274c SPAM BLOCK: {symbol} {side} - {time_diff:.1f}s once geldi")
             return True
     last_signals[key] = current_time
     return False
 
-# Gerçek pozisyon kontrolü
+def execute_with_retry(func, max_retries=3, delay=5):
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            error = str(e)
+            print(f"\u274c Deneme {attempt + 1} basarisiz: {error}")
+            if "418" in error or "banned" in error.lower() or "-1003" in error:
+                wait = 60 * (2 ** attempt)
+                print(f"\u23f3 Ban koruma aktif! {wait}s bekleniyor...")
+                time.sleep(wait)
+            elif attempt < max_retries - 1:
+                time.sleep(delay)
+            else:
+                raise e
+
+# ✅ GERCEK POZISYON KONTROLU
+
 def has_position(client, symbol):
     asset = symbol.replace("USDT", "")
     balances = client.account()["balances"]
     coin = next((b for b in balances if b["asset"] == asset), None)
-    if coin is None:
-        return False
-    return float(coin["free"]) > 0
+    return float(coin["free"]) > 0 if coin else False
 
-@app.route('/webhook', methods=['POST'])
+def get_free_balance(client, asset):
+    balances = client.account()["balances"]
+    bal = next((b for b in balances if b["asset"] == asset), None)
+    return float(bal["free"]) if bal else 0.0
+
+def get_step_size(client, symbol):
+    info = client.exchange_info()
+    sym = next((s for s in info["symbols"] if s["symbol"] == symbol), None)
+    step = 0.0001
+    if sym:
+        for f in sym["filters"]:
+            if f["filterType"] == "LOT_SIZE":
+                step = float(f["stepSize"])
+                break
+    return step
+
+# ✅ FIYAT TAKIPLI TP/SL SISTEMI
+trackers = {}  # symbol -> {entry_price, tp, sl}
+
+def track_tp_sl(symbol, entry_price, tp_percent, sl_percent):
+    client = Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
+    tp = entry_price * (1 + tp_percent / 100)
+    sl = entry_price * (1 - sl_percent / 100)
+    print(f"\ud83c\udf0d Takip: {symbol} | TP: {tp:.2f} | SL: {sl:.2f}")
+
+    while has_position(client, symbol):
+        price = float(client.ticker_price(symbol)["price"])
+        print(f"\ud83d\udd39 {symbol} Anlik: {price:.2f}")
+
+        if price >= tp:
+            print(f"\u2705 TP Seviyesi Geldi - SATILIYOR!")
+            qty = get_free_balance(client, symbol.replace("USDT", ""))
+            step = get_step_size(client, symbol)
+            dec = abs(int(f"{step:e}".split("e")[-1]))
+            qty = round(qty - step, dec)
+            client.new_order(symbol=symbol, side="SELL", type="MARKET", quantity=qty)
+            break
+
+        elif price <= sl:
+            print(f"\u26d4 SL Seviyesi Geldi - SATILIYOR!")
+            qty = get_free_balance(client, symbol.replace("USDT", ""))
+            step = get_step_size(client, symbol)
+            dec = abs(int(f"{step:e}".split("e")[-1]))
+            qty = round(qty - step, dec)
+            client.new_order(symbol=symbol, side="SELL", type="MARKET", quantity=qty)
+            break
+
+        time.sleep(5)
+
+@app.route("/webhook", methods=["POST"])
 def webhook():
     if not request.is_json:
         return jsonify({"status": "error", "message": "JSON bekleniyor"}), 400
 
     data = request.get_json()
-    print(f"📩 Webhook: {data} | Zaman: {datetime.now().strftime('%H:%M:%S')}")
-
     symbol = data.get("ticker", "").upper()
     side = data.get("side", "").upper()
+    client = Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
 
     if side not in ["BUY", "SELL"]:
-        return jsonify({"status": "error", "message": f"Geçersiz yön: {side}"}), 400
+        return jsonify({"status": "error", "message": "BUY/SELL bekleniyor"}), 400
 
     if is_spam_signal(symbol, side):
-        return jsonify({"status": "skipped", "reason": "Spam sinyal"}), 200
+        return jsonify({"status": "skipped", "reason": "Spam sinyali"})
 
     try:
-        client = execute_with_retry(lambda: Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET))
-
         if side == "BUY":
-            usdt_amount = float(str(data.get("usdt_amount", "0")).replace(",", "."))
             price = float(str(data.get("price", "0")).replace(",", "."))
+            step = get_step_size(client, symbol)
+            dec = abs(int(f"{step:e}".split("e")[-1]))
 
-            def get_step_size():
-                info = client.exchange_info()
-                sym = next((s for s in info["symbols"] if s["symbol"] == symbol), None)
-                step = 0.0001
-                if sym:
-                    for f in sym["filters"]:
-                        if f["filterType"] == "LOT_SIZE":
-                            step = float(f["stepSize"])
-                            break
-                return step
+            if str(data.get("usdt_amount")).upper() == "ALL":
+                usdt = get_free_balance(client, "USDT") * 0.998
+                qty = round(usdt / price, dec)
+            elif "usdt_amount" in data:
+                usdt = float(str(data.get("usdt_amount", "0")).replace(",", "."))
+                qty = round(usdt / price, dec)
+            elif "quantity" in data:
+                qty = float(data["quantity"])
+            else:
+                return jsonify({"status": "error", "message": "Miktar belirtilmeli"}), 400
 
-            step_size = execute_with_retry(get_step_size)
-            decimals = abs(int(f"{step_size:e}".split("e")[-1]))
-            quantity = round(usdt_amount / price, decimals)
+            client.new_order(symbol=symbol, side="BUY", type="MARKET", quantity=qty)
 
-        else:  # SELL
+            tp = data.get("tp")
+            sl = data.get("sl")
+            if tp and sl:
+                threading.Thread(target=track_tp_sl, args=(symbol, price, float(tp), float(sl))).start()
+
+            return jsonify({"status": "success", "message": f"{symbol} BUY emri gonderildi", "quantity": qty})
+
+        elif side == "SELL":
             if not has_position(client, symbol):
-                return jsonify({"status": "skipped", "reason": "Gerçek pozisyon yok"}), 200
-
-            def get_balance():
-                balances = client.account()["balances"]
-                asset = symbol.replace("USDT", "")
-                bal = next((b for b in balances if b["asset"] == asset), None)
-                if not bal:
-                    raise Exception(f"{asset} bakiyesi yok")
-                return float(bal["free"])
-
-            free = execute_with_retry(get_balance)
-
-            def get_step_size():
-                info = client.exchange_info()
-                sym = next((s for s in info["symbols"] if s["symbol"] == symbol), None)
-                step = 0.0001
-                if sym:
-                    for f in sym["filters"]:
-                        if f["filterType"] == "LOT_SIZE":
-                            step = float(f["stepSize"])
-                            break
-                return step
-
-            step_size = execute_with_retry(get_step_size)
-            decimals = abs(int(f"{step_size:e}".split("e")[-1]))
-            quantity = round(free - step_size, decimals)
-
-        def place_order():
-            return client.new_order(symbol=symbol, side=side, type="MARKET", quantity=quantity)
-
-        order = execute_with_retry(place_order)
-
-        print(f"✅ İşlem başarılı: {symbol} {side} {quantity} | Zaman: {datetime.now().strftime('%H:%M:%S')}")
-        return jsonify({
-            "status": "success",
-            "message": f"{symbol} için {side} emri gönderildi",
-            "quantity": quantity
-        }), 200
+                return jsonify({"status": "skipped", "reason": "Pozisyon yok"})
+            free = get_free_balance(client, symbol.replace("USDT", ""))
+            step = get_step_size(client, symbol)
+            dec = abs(int(f"{step:e}".split("e")[-1]))
+            qty = round(free - step, dec) if "quantity" not in data else float(data["quantity"])
+            client.new_order(symbol=symbol, side="SELL", type="MARKET", quantity=qty)
+            return jsonify({"status": "success", "message": f"{symbol} SELL gonderildi", "quantity": qty})
 
     except Exception as e:
-        error_msg = str(e)
-        print(f"❌ Emir hatası: {error_msg}")
-        if "418" in error_msg or "banned" in error_msg.lower():
-            return jsonify({
-                "status": "error",
-                "message": "Rate limit hatası - Sistem geçici olarak durduruldu",
-                "error_type": "rate_limit"
-            }), 429
-        return jsonify({"status": "error", "message": f"İşlem hatası: {error_msg}"}), 500
+        return jsonify({"status": "error", "message": str(e)})
 
-# ✅ Tüm coin bakiyeleri
-@app.route('/balance', methods=['GET'])
+@app.route("/balance", methods=["GET"])
 def balance():
-    try:
-        client = Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
-        info = client.account()
-        result = {b['asset']: float(b['free']) for b in info['balances'] if float(b['free']) > 0}
-        return jsonify({"status": "success", "balances": result})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
+    client = Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
+    balances = client.account()["balances"]
+    result = {b["asset"]: float(b["free"]) for b in balances if float(b["free"]) > 0}
+    return jsonify({"status": "success", "balances": result})
 
-# ✅ Belirli coin bakiyesi (örn: /balance/BNB)
-@app.route('/balance/<symbol>', methods=['GET'])
-def balance_of(symbol):
-    try:
-        client = Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
-        info = client.account()
-        coin = next((b for b in info['balances'] if b['asset'].upper() == symbol.upper()), None)
-        if not coin:
-            return jsonify({"status": "success", "asset": symbol.upper(), "balance": 0.0})
-        return jsonify({"status": "success", "asset": symbol.upper(), "balance": float(coin['free'])})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
+@app.route("/balance/<symbol>", methods=["GET"])
+def coin_balance(symbol):
+    client = Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
+    free = get_free_balance(client, symbol.upper())
+    return jsonify({"status": "success", "asset": symbol.upper(), "balance": free})
 
-# Durum kontrol
-@app.route('/status', methods=['GET'])
+@app.route("/status", methods=["GET"])
 def status():
     return jsonify({
-        "status": "active",
+        "status": "running",
         "last_signals": {k: datetime.fromtimestamp(v).strftime('%H:%M:%S') for k, v in last_signals.items()},
-        "current_time": datetime.now().strftime('%H:%M:%S')
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
 
-# IP öğren
-@app.route('/myip', methods=['GET'])
-def get_ip():
+@app.route("/myip", methods=["GET"])
+def myip():
     return jsonify({"ip": request.remote_addr})
 
-# Flask başlat
+@app.route("/reset", methods=["POST"])
+def reset():
+    last_signals.clear()
+    trackers.clear()
+    return jsonify({"status": "reset", "message": "Geçmiş sinyaller temizlendi."})
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    print(f"🚀 Bot başlatılıyor - Port: {port}")
+    print(f"\ud83d\ude80 Bot calisiyor | Port: {port}")
     app.run(host="0.0.0.0", port=port)
