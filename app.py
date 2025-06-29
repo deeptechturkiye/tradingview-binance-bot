@@ -4,61 +4,75 @@ from binance.spot import Spot as Client
 
 app = Flask(__name__)
 
-# Binance API Anahtarları
-BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY", "BURAYA_KEY")
-BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET", "BURAYA_SECRET")
-
-# Binance istemcisi
+# Ortam değişkenlerinden API anahtarlarını al
+BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY")
+BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET")
 client = Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
 
-# Ana endpoint → servis ayakta mı kontrol için
 @app.route('/')
-def home():
-    return "✅ Bot is working and waiting for webhook..."
+def index():
+    return "✅ Bot çalışıyor!"
 
-# Webhook endpoint
+@app.route('/balance')
+def balance_all():
+    account_info = client.account()
+    balances = {
+        asset['asset']: float(asset['free'])
+        for asset in account_info['balances']
+        if float(asset['free']) > 0
+    }
+    return jsonify({"balances": balances, "status": "success"})
+
+@app.route('/balance/<symbol>')
+def balance_one(symbol):
+    balance = client.get_asset_balance(asset=symbol.upper())
+    return jsonify({
+        "asset": symbol.upper(),
+        "balance": float(balance['free']),
+        "status": "success"
+    })
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    data = request.get_json()
-
     try:
-        symbol = data['ticker']
-        side = data['side']
-        usdt_amount = float(data['usdt_amount'])
+        data = request.json
+        symbol = data.get("ticker")
+        side = data.get("side").upper()
+        usdt_amount_raw = data.get("usdt_amount")
 
-        # Fiyatı al
-        price = float(client.ticker_price(symbol=symbol)['price'])
-        quantity = round(usdt_amount / price, 5)
+        if symbol is None or side not in ["BUY", "SELL"] or usdt_amount_raw is None:
+            return jsonify({"message": "Eksik parametre", "status": "error"}), 400
 
-        # Alış/Satış işlemi
-        if side == "BUY":
-            order = client.new_order(symbol=symbol, side="BUY", type="MARKET", quantity=quantity)
-        elif side == "SELL":
-            order = client.new_order(symbol=symbol, side="SELL", type="MARKET", quantity=quantity)
+        base_asset = symbol.replace("USDT", "")
+        quantity = 0
+
+        if usdt_amount_raw == "ALL":
+            asset = base_asset if side == "SELL" else "USDT"
+            balance = float(client.get_asset_balance(asset=asset)["free"])
+            if side == "SELL":
+                quantity = balance * 0.995  # %0.5 güvenlik marjı
+            else:
+                price = float(client.ticker_price(symbol=symbol))
+                quantity = (balance / price) * 0.995
         else:
-            return jsonify({"status": "error", "message": "Geçersiz işlem yönü"}), 400
+            usdt_amount = float(usdt_amount_raw)
+            price = float(client.ticker_price(symbol=symbol))
+            quantity = usdt_amount / price
 
-        print(f"✅ Emir gönderildi: {order}")
-        return jsonify({"status": "success", "order": order}), 200
+        # Yuvarla
+        quantity = round(quantity, 5)
+
+        order = client.new_order(
+            symbol=symbol,
+            side=side,
+            type="MARKET",
+            quantity=quantity
+        )
+
+        return jsonify({"message": f"{side} emri gönderildi", "order": order, "status": "success"})
 
     except Exception as e:
-        print(f"❌ Hata: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"message": str(e), "status": "error"}), 500
 
-# Bakiye sorgulama
-@app.route('/balance/<symbol>', methods=['GET'])
-def balance(symbol):
-    try:
-        balance = client.balance(symbol=symbol.upper())
-        return jsonify({"status": "success", "asset": symbol.upper(), "balance": float(balance)}), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route('/balance', methods=['GET'])
-def all_balances():
-    try:
-        balances = client.account()['balances']
-        balances = {item['asset']: float(item['free']) for item in balances if float(item['free']) > 0}
-        return jsonify({"status": "success", "balances": balances}), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+if __name__ == '__main__':
+    app.run(debug=True)
