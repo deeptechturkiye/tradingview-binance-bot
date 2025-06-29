@@ -12,20 +12,13 @@ BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY")
 BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET")
 client = Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
 
-# Port binding için Render uyumu
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
-
-# Exchange info cache
+# Exchange info cache ve işlem sınırı
 exchange_info_cache = {}
 exchange_info_lock = Lock()
-
-# Rate limit koruması
 last_request_time = 0
 request_lock = Lock()
 
-# Binance-connector uyumlu bakiye sorgusu
+# Bakiye sorgulama (tek API çağrısı ile)
 def get_free_balance(asset):
     account_info = client.account()
     for b in account_info['balances']:
@@ -33,6 +26,7 @@ def get_free_balance(asset):
             return float(b['free'])
     return 0.0
 
+# StepSize'e göre miktar yuvarlama
 def round_step(qty, step):
     precision = int(round(-math.log10(step)))
     return round(qty - (qty % step), precision)
@@ -64,11 +58,10 @@ def balance_one(symbol):
 def webhook():
     global last_request_time
     try:
-        # Rate limiter
         with request_lock:
             now = time.time()
             if now - last_request_time < 1:
-                return jsonify({"message": "Çok sık istek gönderildi", "status": "rate_limited"}), 429
+                return jsonify({"message": "Çok sık istek", "status": "rate_limited"}), 429
             last_request_time = now
 
         data = request.json
@@ -81,7 +74,7 @@ def webhook():
 
         base_asset = symbol.replace("USDT", "")
 
-        # exchangeInfo önbellekli
+        # Exchange info cache kullan
         with exchange_info_lock:
             if symbol not in exchange_info_cache:
                 exchange_info_cache[symbol] = client.exchange_info(symbol=symbol)
@@ -92,7 +85,6 @@ def webhook():
         )
         step_size = float(lot_size_filter["stepSize"])
 
-        # Miktar hesaplama
         quantity = 0
         if usdt_amount_raw == "ALL":
             asset = base_asset if side == "SELL" else "USDT"
@@ -108,6 +100,7 @@ def webhook():
             quantity = round_step(usdt_amount / price, step_size)
 
         if quantity <= 0:
+            print(f"Geçersiz miktar: {quantity}")
             return jsonify({"message": "İşlem miktarı geçersiz", "status": "error"}), 400
 
         order = client.new_order(
@@ -117,6 +110,11 @@ def webhook():
             quantity=quantity
         )
 
+        # Sade log çıktısı
+        print(f"Webhook verisi: {data}")
+        print(f"İşlem: {side} - {symbol} - Miktar: {quantity}")
+        print(f"Binance cevabı: {order}")
+
         return jsonify({
             "message": f"{side} emri gönderildi",
             "quantity": quantity,
@@ -125,4 +123,5 @@ def webhook():
         })
 
     except Exception as e:
+        print(f"HATA: {str(e)}")
         return jsonify({"message": str(e), "status": "error"}), 500
