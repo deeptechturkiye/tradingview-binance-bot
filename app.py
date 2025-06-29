@@ -7,20 +7,32 @@ from threading import Lock
 
 app = Flask(__name__)
 
-# Binance API bağlantısı
+# Binance API
 BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY")
 BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET")
 client = Client(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
+
+# Port binding için Render uyumu
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
 
 # Exchange info cache
 exchange_info_cache = {}
 exchange_info_lock = Lock()
 
-# Sinyal başına rate limit (örnek: saniyede 1)
+# Rate limit koruması
 last_request_time = 0
 request_lock = Lock()
 
-# LOT_SIZE'a uygun miktarı yuvarlama fonksiyonu
+# Binance-connector uyumlu bakiye sorgusu
+def get_free_balance(asset):
+    account_info = client.account()
+    for b in account_info['balances']:
+        if b['asset'] == asset:
+            return float(b['free'])
+    return 0.0
+
 def round_step(qty, step):
     precision = int(round(-math.log10(step)))
     return round(qty - (qty % step), precision)
@@ -41,19 +53,18 @@ def balance_all():
 
 @app.route('/balance/<symbol>')
 def balance_one(symbol):
-    balance = client.get_asset_balance(asset=symbol.upper())
+    balance = get_free_balance(symbol.upper())
     return jsonify({
         "asset": symbol.upper(),
-        "balance": float(balance['free']),
+        "balance": balance,
         "status": "success"
     })
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     global last_request_time
-
     try:
-        # Rate Limiting (1 istek / saniye)
+        # Rate limiter
         with request_lock:
             now = time.time()
             if now - last_request_time < 1:
@@ -70,7 +81,7 @@ def webhook():
 
         base_asset = symbol.replace("USDT", "")
 
-        # exchangeInfo'yu önbellekten al veya çek
+        # exchangeInfo önbellekli
         with exchange_info_lock:
             if symbol not in exchange_info_cache:
                 exchange_info_cache[symbol] = client.exchange_info(symbol=symbol)
@@ -85,7 +96,7 @@ def webhook():
         quantity = 0
         if usdt_amount_raw == "ALL":
             asset = base_asset if side == "SELL" else "USDT"
-            balance = float(client.get_asset_balance(asset=asset)["free"])
+            balance = get_free_balance(asset)
             if side == "SELL":
                 quantity = round_step(balance * 0.995, step_size)
             else:
@@ -99,7 +110,6 @@ def webhook():
         if quantity <= 0:
             return jsonify({"message": "İşlem miktarı geçersiz", "status": "error"}), 400
 
-        # Market emri gönder
         order = client.new_order(
             symbol=symbol,
             side=side,
@@ -116,7 +126,3 @@ def webhook():
 
     except Exception as e:
         return jsonify({"message": str(e), "status": "error"}), 500
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
