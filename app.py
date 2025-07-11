@@ -12,7 +12,7 @@ BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY")
 BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET")
 
 # Binance UM Futures client'ı başlat
-client = UMFutures(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
+client = UMFutures(key=BINANCE_API_KEY, secret=BINANCE_API_SECRET)
 
 exchange_info_cache = {}
 exchange_info_lock = Lock()
