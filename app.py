@@ -7,11 +7,9 @@ from threading import Lock
 
 app = Flask(__name__)
 
-# Çevresel değişkenlerden API anahtarlarını al
 BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY")
 BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET")
 
-# Binance UM Futures client'ı başlat
 client = UMFutures(key=BINANCE_API_KEY, secret=BINANCE_API_SECRET)
 
 exchange_info_cache = {}
@@ -19,14 +17,10 @@ exchange_info_lock = Lock()
 last_request_time = 0
 request_lock = Lock()
 
-
-# Lot adımı kadar miktarı yuvarlar
 def round_step_size(quantity, step_size):
     precision = int(round(-math.log10(step_size)))
     return round(quantity - (quantity % step_size), precision)
 
-
-# USDT bakiyesini al
 def get_balance(asset='USDT'):
     balances = client.balance()
     for b in balances:
@@ -34,8 +28,6 @@ def get_balance(asset='USDT'):
             return float(b['balance'])
     return 0.0
 
-
-# Açık pozisyonu kontrol et
 def get_position(symbol):
     positions = client.get_position_risk(symbol=symbol)
     for p in positions:
@@ -43,11 +35,15 @@ def get_position(symbol):
             return p
     return None
 
+def get_current_margin_and_leverage(symbol):
+    pos = get_position(symbol)
+    if pos is None:
+        return None, None
+    return pos.get('marginType'), int(pos.get('leverage', 0))
 
 @app.route("/")
 def index():
     return "Binance Perpetual Bot çalışıyor ✅"
-
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -67,9 +63,20 @@ def webhook():
         if not symbol or side not in ["BUY", "SELL"] or usdt_amount_raw is None:
             return jsonify({"message": "Eksik parametre", "status": "error"}), 400
 
-        # Marjin ayarları
-        client.change_margin_type(symbol=symbol, marginType="ISOLATED")
-        client.change_leverage(symbol=symbol, leverage=1)
+        # Margin ve leverage ayarlarını kontrol et ve gerekirse değiştir
+        margin_type, leverage = get_current_margin_and_leverage(symbol)
+
+        if margin_type != "ISOLATED":
+            try:
+                client.change_margin_type(symbol=symbol, marginType="ISOLATED")
+            except Exception:
+                pass  # Zaten doğruysa hata yoksay
+
+        if leverage != 1:
+            try:
+                client.change_leverage(symbol=symbol, leverage=1)
+            except Exception:
+                pass  # Zaten doğruysa hata yoksay
 
         # Borsa bilgilerini cache'le
         with exchange_info_lock:
@@ -84,7 +91,6 @@ def webhook():
         price = float(client.ticker_price(symbol=symbol)["price"])
         usdt_balance = get_balance("USDT")
 
-        # İşlem büyüklüğü
         if usdt_amount_raw == "ALL":
             notional = max(35, min(500, usdt_balance * 0.08))
         else:
@@ -98,7 +104,6 @@ def webhook():
         if quantity < min_qty:
             return jsonify({"message": "Miktar Binance minimum sınırın altında", "status": "error"}), 400
 
-        # Pozisyon varsa kapat
         current_position = get_position(symbol)
         if current_position:
             pos_amt = float(current_position['positionAmt'])
@@ -111,9 +116,8 @@ def webhook():
                     quantity=abs(pos_amt),
                     reduceOnly=True
                 )
-                time.sleep(1)  # Pozisyon kapansın
+                time.sleep(1)
 
-        # Yeni pozisyon aç
         order = client.new_order(
             symbol=symbol,
             side=side,
