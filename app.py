@@ -49,7 +49,7 @@ def webhook():
             last_request_time = now
 
         data = request.json
-        symbol = data.get("ticker")
+        symbol = data.get("ticker", "").replace(".P", "")  # TradingView sembol düzeltme
         side = data.get("side", "").upper()
         usdt_amount_raw = data.get("usdt_amount")
 
