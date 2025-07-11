@@ -2,7 +2,7 @@ import os
 import time
 import math
 from flask import Flask, request, jsonify
-from binance.um_futures.um_futures_http import UMFutures
+from binance.um_futures import UMFutures
 from threading import Lock
 
 app = Flask(__name__)
@@ -64,7 +64,7 @@ def webhook():
         side = data.get("side", "").upper()
         usdt_amount_raw = data.get("usdt_amount")
 
-        if symbol is None or side not in ["BUY", "SELL"] or usdt_amount_raw is None:
+        if not symbol or side not in ["BUY", "SELL"] or usdt_amount_raw is None:
             return jsonify({"message": "Eksik parametre", "status": "error"}), 400
 
         # Marjin ayarları
