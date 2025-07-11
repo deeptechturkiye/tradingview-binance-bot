@@ -60,6 +60,10 @@ def webhook():
         side = data.get("side", "").upper()
         usdt_amount_raw = data.get("usdt_amount")
 
+        # "NONE" sinyalini işleme almayalım
+        if side == "NONE":
+            return jsonify({"message": "İşlem sinyali yok", "status": "no_action"}), 200
+
         if not symbol or side not in ["BUY", "SELL"] or usdt_amount_raw is None:
             return jsonify({"message": "Eksik parametre", "status": "error"}), 400
 
