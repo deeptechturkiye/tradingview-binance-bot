@@ -2,7 +2,7 @@ import os
 import time
 import math
 from flask import Flask, request, jsonify
-from binance.um_futures import UMFutures
+from binance.um_futures.um_futures_http import UMFutures
 from threading import Lock
 
 app = Flask(__name__)
