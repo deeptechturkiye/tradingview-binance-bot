@@ -49,45 +49,47 @@ def index():
 def webhook():
     global last_request_time
     try:
+        if not request.is_json:
+            return jsonify({"message": "Content-Type must be application/json", "status": "error"}), 415
+
         with request_lock:
             now = time.time()
             if now - last_request_time < 1:
                 return jsonify({"message": "Çok sık istek", "status": "rate_limited"}), 429
             last_request_time = now
 
-        data = request.json
+        data = request.get_json()
         symbol = data.get("ticker", "").replace(".P", "")
         side = data.get("side", "").upper()
         usdt_amount_raw = data.get("usdt_amount")
 
-        # "NONE" sinyalini işleme almayalım
-        if side == "NONE":
-            return jsonify({"message": "İşlem sinyali yok", "status": "no_action"}), 200
-
         if not symbol or side not in ["BUY", "SELL"] or usdt_amount_raw is None:
             return jsonify({"message": "Eksik parametre", "status": "error"}), 400
 
-        # Margin ve leverage ayarlarını kontrol et ve gerekirse değiştir
         margin_type, leverage = get_current_margin_and_leverage(symbol)
 
         if margin_type != "ISOLATED":
             try:
                 client.change_margin_type(symbol=symbol, marginType="ISOLATED")
             except Exception:
-                pass  # Zaten doğruysa hata yoksay
+                pass
 
         if leverage != 1:
             try:
                 client.change_leverage(symbol=symbol, leverage=1)
             except Exception:
-                pass  # Zaten doğruysa hata yoksay
+                pass
 
-        # Borsa bilgilerini cache'le
         with exchange_info_lock:
-            if symbol not in exchange_info_cache:
-                exchange_info_cache[symbol] = client.exchange_info(symbol=symbol)
+            if not exchange_info_cache:
+                exchange_info_cache.update(client.exchange_info())
 
-        filters = exchange_info_cache[symbol]["symbols"][0]["filters"]
+        symbol_info = next((s for s in exchange_info_cache['symbols'] if s['symbol'] == symbol), None)
+
+        if symbol_info is None:
+            return jsonify({"message": "Symbol not found", "status": "error"}), 400
+
+        filters = symbol_info["filters"]
         lot_size = next(f for f in filters if f["filterType"] == "LOT_SIZE")
         step_size = float(lot_size["stepSize"])
         min_qty = float(lot_size["minQty"])
